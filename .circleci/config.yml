@@ -1,0 +1,208 @@
+---
+version: 2.1
+
+workflows:
+  version: 2
+  main:
+    jobs:
+      - pnpm/install:
+          name: Install
+          context: gh-npm-public
+          pre-steps:
+            - checkout
+          post-steps:
+            - self/stash_modules
+      - pnpm/script:
+          name: Build
+          requires:
+            - Install
+          pre-steps:
+            - checkout
+            - self/unstash
+            - pnpm/script:
+                args: lint
+          args: build
+          post-steps:
+            - persist_to_workspace:
+                root: .
+                paths:
+                  - pkg/**
+      - pnpm/test:
+          name: Test
+          context: gh-npm-public
+          args: -- --coverage
+          pre-steps:
+            - checkout
+            - self/unstash
+          post-steps:
+            - codecov/upload:
+                file: coverage/coverage-final.json
+                flags: unittests
+          requires:
+            - Install
+      - pnpm/execute:
+          name: Release
+          context: gh-npm-public
+          requires:
+            - Build
+            - Test
+          pre-steps:
+            - checkout
+            - self/unstash
+          args: semantic-release
+
+orbs:
+  codecov: codecov/codecov@1.0.5
+  # # pnpm
+  pnpm:
+    executors:
+      default:
+        docker:
+          - image: 'kennship/node-ci:2ad96d9c686d82744098bd079fc16d2ce19e8422'
+    # ## pnpm.commands
+    commands:
+      install:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        steps:
+          - run:
+              name: Install dependencies
+              command: pnpm <<#parameters.multi>>multi<</parameters.multi>> install <<parameters.args>>
+      test:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        steps:
+          - run:
+              name: Run tests
+              command: pnpm <<#parameters.multi>>recursive<</parameters.multi>> test <<parameters.args>>
+      execute:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpx
+            type: string
+            default: ''
+        steps:
+          - run:
+              name: Execute pnpx command
+              command: pnpx <<parameters.args>>
+      script:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        steps:
+          - unless:
+              condition: <<parameters.multi>>
+              steps:
+                - run:
+                    name: Run script
+                    command: pnpm run <<parameters.args>>
+          - when:
+              condition: <<parameters.multi>>
+              steps:
+                - run:
+                    name: Run script in all packages
+                    command: pnpm recursive run <<parameters.args>>
+    # > /pnpm.commands
+    # ## pnpm.jobs
+    jobs:
+      install:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        executor: default
+        steps:
+          - install:
+              multi: <<parameters.multi>>
+              args: <<parameters.args>>
+      test:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        executor: default
+        steps:
+          - test:
+              multi: <<parameters.multi>>
+              args: <<parameters.args>>
+      execute:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpx
+            type: string
+            default: ''
+        executor: default
+        steps:
+          - execute:
+              args: <<parameters.args>>
+      script:
+        parameters:
+          args:
+            description: Command-line args to pass to pnpm
+            type: string
+            default: ''
+          multi:
+            description: Run as a workspace command
+            type: boolean
+            default: false
+        executor: default
+        steps:
+          - script:
+              multi: <<parameters.multi>>
+              args: <<parameters.args>>
+    # > /pnpm.jobs
+  # > /pnpm
+  # # semantic_release
+  semantic_release:
+    commands:
+      publish:
+        steps:
+          - run:
+              name: release
+              command: pnpx semantic-release
+  # > /semantic_release
+  # # self
+  self:
+    commands:
+      stash_modules:
+        steps:
+          - persist_to_workspace:
+              root: .
+              paths:
+                - node_modules/**
+                - packages/*/node_modules/**
+      unstash:
+        steps:
+          - attach_workspace:
+              at: .
+  # > /self
